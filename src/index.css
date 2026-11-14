@@ -28,12 +28,25 @@
       opacity 150ms ease;
   }
 
+  a:focus-visible,
+  button:focus-visible,
+  input:focus-visible,
+  select:focus-visible,
+  textarea:focus-visible {
+    outline: 2px solid #b68623;
+    outline-offset: 2px;
+  }
+
   button:not(:disabled):active,
   [role="button"]:not([aria-disabled="true"]):active {
     transform: scale(0.965);
   }
 
   @media (prefers-reduced-motion: reduce) {
+    html {
+      scroll-behavior: auto !important;
+    }
+
     button:not(:disabled):active,
     [role="button"]:not([aria-disabled="true"]):active {
       transform: none;

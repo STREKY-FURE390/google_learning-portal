@@ -8,7 +8,7 @@ import { LearnerProfile } from '../data/portalData';
 // mappings below to match your documented API specification.
 // ============================================================================
 
-export const AUTH_API_BASE_URL = (import.meta.env.VITE_AUTH_API_BASE_URL ?? '')
+export const AUTH_API_BASE_URL = (import.meta.env?.VITE_AUTH_API_BASE_URL ?? '')
   .trim()
   .replace(/\/+$/, '');
 

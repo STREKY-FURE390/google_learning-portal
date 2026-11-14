@@ -163,13 +163,112 @@ function handleGeminiError(err: unknown, res: Response, fallbackMessage: string)
   });
 }
 
+const MAX_MESSAGE_LENGTH = 2000;
+const RATE_LIMIT_WINDOW_MS = 60_000;
+const RATE_LIMIT_MAX_REQUESTS = 30;
+const rateLimitMap = new Map<string, { count: number; resetAt: number }>();
+
+function checkApiRateLimit(req: Request, res: Response): boolean {
+  const now = Date.now();
+  if (rateLimitMap.size > 500) {
+    for (const [key, entry] of rateLimitMap.entries()) {
+      if (entry.resetAt <= now) rateLimitMap.delete(key);
+    }
+  }
+
+  const clientIp =
+    (typeof req.headers['x-forwarded-for'] === 'string'
+      ? req.headers['x-forwarded-for'].split(',')[0]?.trim()
+      : req.ip) || 'unknown';
+
+  const current = rateLimitMap.get(clientIp);
+  if (!current || current.resetAt <= now) {
+    rateLimitMap.set(clientIp, { count: 1, resetAt: now + RATE_LIMIT_WINDOW_MS });
+    return true;
+  }
+
+  if (current.count >= RATE_LIMIT_MAX_REQUESTS) {
+    res.status(429).json({
+      error: 'Too many AI requests in a short window. Please wait a minute and try again.',
+    });
+    return false;
+  }
+
+  current.count += 1;
+  return true;
+}
+
+function clampString(value: unknown, maxLen: number): string | undefined {
+  if (typeof value !== 'string') return undefined;
+  const trimmed = value.trim();
+  return trimmed ? trimmed.slice(0, maxLen) : undefined;
+}
+
+function clampStringList(value: unknown, maxItems = 16, maxLen = 64): string[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  return value
+    .filter((item): item is string => typeof item === 'string' && item.trim().length > 0)
+    .slice(0, maxItems)
+    .map((item) => item.trim().slice(0, maxLen));
+}
+
+function sanitizeLearnerContext(ctx: unknown): LearnerContextPayload | undefined {
+  if (!ctx || typeof ctx !== 'object') return undefined;
+  const raw = ctx as Record<string, unknown>;
+  return {
+    name: clampString(raw.name, 80),
+    careerGoal: clampString(raw.careerGoal, 80),
+    matchPercent:
+      typeof raw.matchPercent === 'number' && Number.isFinite(raw.matchPercent)
+        ? Math.max(0, Math.min(100, Math.round(raw.matchPercent)))
+        : undefined,
+    alreadyHaveSkills: clampStringList(raw.alreadyHaveSkills),
+    developingSkills: clampStringList(raw.developingSkills),
+    missingSkills: clampStringList(raw.missingSkills),
+    assessmentStatus: clampString(raw.assessmentStatus, 32),
+    assessmentFocus: clampString(raw.assessmentFocus, 120),
+    recommendedNextTitle: clampString(raw.recommendedNextTitle, 140),
+    recommendedNextSkill: clampString(raw.recommendedNextSkill, 64),
+    recommendedNextExercise: clampString(raw.recommendedNextExercise, 320),
+    topCourseTitle: clampString(raw.topCourseTitle, 140),
+    topCourseSkill: clampString(raw.topCourseSkill, 64),
+    topCourseExercise: clampString(raw.topCourseExercise, 320),
+    completedCount:
+      typeof raw.completedCount === 'number' && Number.isFinite(raw.completedCount)
+        ? Math.max(0, Math.round(raw.completedCount))
+        : undefined,
+    inProgressCount:
+      typeof raw.inProgressCount === 'number' && Number.isFinite(raw.inProgressCount)
+        ? Math.max(0, Math.round(raw.inProgressCount))
+        : undefined,
+    totalModules:
+      typeof raw.totalModules === 'number' && Number.isFinite(raw.totalModules)
+        ? Math.max(0, Math.round(raw.totalModules))
+        : undefined,
+    certificationsCount:
+      typeof raw.certificationsCount === 'number' && Number.isFinite(raw.certificationsCount)
+        ? Math.max(0, Math.round(raw.certificationsCount))
+        : undefined,
+    projects: clampStringList(raw.projects, 12, 100),
+  };
+}
+
 async function startServer() {
   const app = express();
-  app.use(express.json({ limit: '1mb' }));
+  app.disable('x-powered-by');
+  app.use((_req, res, next) => {
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('X-Frame-Options', 'SAMEORIGIN');
+    res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+    res.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=()');
+    next();
+  });
+  app.use(express.json({ limit: '256kb' }));
 
   app.post('/api/mentor/chat', async (req: Request, res: Response) => {
+    if (!checkApiRateLimit(req, res)) return;
     const body = (req.body ?? {}) as MentorChatRequestBody;
-    const message = typeof body.message === 'string' ? body.message.trim() : '';
+    const message = clampString(body.message, MAX_MESSAGE_LENGTH) ?? '';
 
     if (!message) {
       res.status(400).json({ error: 'Please enter a question before sending.' });
@@ -184,12 +283,26 @@ async function startServer() {
       return;
     }
 
+    const safeHistory = Array.isArray(body.history)
+      ? body.history
+          .slice(-6)
+          .filter(
+            (entry): entry is ChatHistoryEntry =>
+              Boolean(entry) &&
+              (entry.role === 'learner' || entry.role === 'mentor') &&
+              typeof entry.text === 'string' &&
+              entry.text.trim().length > 0
+          )
+          .map((entry) => ({ role: entry.role, text: entry.text.trim().slice(0, 800) }))
+      : undefined;
+    const safeContext = sanitizeLearnerContext(body.learnerContext);
+
     try {
       const response = await ai.models.generateContent({
         model: 'gemini-4-hydrogen',
-        contents: formatConversationContents(message, body.history),
+        contents: formatConversationContents(message, safeHistory),
         config: {
-          systemInstruction: buildSystemInstruction(body.learnerContext),
+          systemInstruction: buildSystemInstruction(safeContext),
           thinkingConfig: { thinkingLevel: ThinkingLevel.LOW },
         },
       });
@@ -213,8 +326,9 @@ async function startServer() {
   });
 
   app.post('/api/agents/analyze', async (req: Request, res: Response) => {
+    if (!checkApiRateLimit(req, res)) return;
     const body = (req.body ?? {}) as AgentsAnalyzeRequestBody;
-    const ctx = body.learnerContext;
+    const ctx = sanitizeLearnerContext(body.learnerContext);
 
     const ai = createGeminiClient();
     if (!ai) {
@@ -282,9 +396,19 @@ async function startServer() {
         return;
       }
 
-      const parsed = JSON.parse(rawText) as {
+      let parsed: {
         agents?: Array<{ role?: string; focus?: string; contribution?: string }>;
       };
+      try {
+        parsed = JSON.parse(rawText) as {
+          agents?: Array<{ role?: string; focus?: string; contribution?: string }>;
+        };
+      } catch {
+        res.status(502).json({
+          error: 'Gemini returned an unreadable agent response. Please try refreshing.',
+        });
+        return;
+      }
       const items = Array.isArray(parsed?.agents) ? parsed.agents : [];
 
       const byRole = new Map<string, { focus: string; contribution: string }>();

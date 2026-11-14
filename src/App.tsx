@@ -3,17 +3,26 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { Component, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { Component, Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Lenis from 'lenis';
 import { useReducedMotion } from 'motion/react';
-import { CoursesPage } from './components/CoursesPage';
-import { HomeDashboard } from './components/HomeDashboard';
 import { HomeVideoGate } from './components/HomeVideoGate';
-import { LearningPathPage } from './components/LearningPathPage';
 import { LoginPage } from './components/LoginPage';
 import { PageTransitionPanels, ShutterPhase } from './components/PageTransitionPanels';
 import { PortalNav } from './components/PortalNav';
-import { ProfilePage } from './components/ProfilePage';
+
+const HomeDashboard = lazy(() =>
+  import('./components/HomeDashboard').then((m) => ({ default: m.HomeDashboard }))
+);
+const LearningPathPage = lazy(() =>
+  import('./components/LearningPathPage').then((m) => ({ default: m.LearningPathPage }))
+);
+const CoursesPage = lazy(() =>
+  import('./components/CoursesPage').then((m) => ({ default: m.CoursesPage }))
+);
+const ProfilePage = lazy(() =>
+  import('./components/ProfilePage').then((m) => ({ default: m.ProfilePage }))
+);
 import {
   AssessmentState,
   AssessmentStatus,
@@ -703,89 +712,99 @@ export default function App() {
             onExitDemo={handleExitDemo}
           />
 
-          {activePage === 'home' && (
-            <HomeDashboard
-              profile={learnerProfile}
-              careerMatch={careerMatch}
-              rankedCourses={rankedCourses}
-              adaptiveRoadmap={adaptiveRoadmap}
-              assessment={assessment}
-              agentInsights={agentInsights}
-              isAnalyzingAgents={isAnalyzingAgents}
-              agentAnalysisError={agentAnalysisError}
-              onRefreshAgents={() => void runLiveAgentAnalysis()}
-              completedLessonIds={completedLessonIds}
-              inProgressLessonIds={inProgressLessonIds}
-              onStartLesson={handleStartLesson}
-              onToggleLesson={handleToggleLesson}
-              onResetProgress={handleResetProgress}
-              onSelectPage={handleSelectPage}
-              onScrollToTarget={scrollToTarget}
-              onScrollToPosition={scrollToPosition}
-              onScrollToPositionImmediate={scrollToPositionImmediate}
-              startOpenedToHero={startOpenedToHero}
-              onConsumedStartOpened={handleConsumedStartOpened}
-              onExitDemo={handleExitDemo}
-            />
-          )}
+          <Suspense
+            fallback={
+              <main className="min-h-screen bg-[#FCFBF8] text-[#1B1710] flex items-center justify-center pt-20 px-6">
+                <div className="rounded-2xl border border-[#E6D7B3] bg-white px-6 py-4 text-sm font-medium text-[#5A5140] shadow-xs">
+                  Loading workspace...
+                </div>
+              </main>
+            }
+          >
+            {activePage === 'home' && (
+              <HomeDashboard
+                profile={learnerProfile}
+                careerMatch={careerMatch}
+                rankedCourses={rankedCourses}
+                adaptiveRoadmap={adaptiveRoadmap}
+                assessment={assessment}
+                agentInsights={agentInsights}
+                isAnalyzingAgents={isAnalyzingAgents}
+                agentAnalysisError={agentAnalysisError}
+                onRefreshAgents={() => void runLiveAgentAnalysis()}
+                completedLessonIds={completedLessonIds}
+                inProgressLessonIds={inProgressLessonIds}
+                onStartLesson={handleStartLesson}
+                onToggleLesson={handleToggleLesson}
+                onResetProgress={handleResetProgress}
+                onSelectPage={handleSelectPage}
+                onScrollToTarget={scrollToTarget}
+                onScrollToPosition={scrollToPosition}
+                onScrollToPositionImmediate={scrollToPositionImmediate}
+                startOpenedToHero={startOpenedToHero}
+                onConsumedStartOpened={handleConsumedStartOpened}
+                onExitDemo={handleExitDemo}
+              />
+            )}
 
-          {activePage === 'learning-path' && (
-            <LearningPathPage
-              profile={learnerProfile}
-              careerMatch={careerMatch}
-              adaptiveRoadmap={adaptiveRoadmap}
-              assessment={assessment}
-              agentInsights={agentInsights}
-              completedLessonIds={completedLessonIds}
-              inProgressLessonIds={inProgressLessonIds}
-              onUpdateAssessment={handleUpdateAssessment}
-              onStartLesson={handleStartLesson}
-              onToggleLesson={handleToggleLesson}
-              onResetProgress={handleResetProgress}
-              onSelectPage={handleSelectPage}
-              onScrollToTarget={scrollToTarget}
-            />
-          )}
+            {activePage === 'learning-path' && (
+              <LearningPathPage
+                profile={learnerProfile}
+                careerMatch={careerMatch}
+                adaptiveRoadmap={adaptiveRoadmap}
+                assessment={assessment}
+                agentInsights={agentInsights}
+                completedLessonIds={completedLessonIds}
+                inProgressLessonIds={inProgressLessonIds}
+                onUpdateAssessment={handleUpdateAssessment}
+                onStartLesson={handleStartLesson}
+                onToggleLesson={handleToggleLesson}
+                onResetProgress={handleResetProgress}
+                onSelectPage={handleSelectPage}
+                onScrollToTarget={scrollToTarget}
+              />
+            )}
 
-          {activePage === 'courses' && (
-            <CoursesPage
-              courses={courses}
-              careerMatch={careerMatch}
-              rankedCourses={rankedCourses}
-              completedLessonIds={completedLessonIds}
-              inProgressLessonIds={inProgressLessonIds}
-              onStartLesson={handleStartLesson}
-              onToggleLesson={handleToggleLesson}
-              onResetProgress={handleResetProgress}
-              onCreateCourse={handleCreateCourse}
-              onImportCourses={handleImportCourses}
-              onRemoveCourse={handleRemoveCourse}
-              onSelectPage={handleSelectPage}
-            />
-          )}
+            {activePage === 'courses' && (
+              <CoursesPage
+                courses={courses}
+                careerMatch={careerMatch}
+                rankedCourses={rankedCourses}
+                completedLessonIds={completedLessonIds}
+                inProgressLessonIds={inProgressLessonIds}
+                onStartLesson={handleStartLesson}
+                onToggleLesson={handleToggleLesson}
+                onResetProgress={handleResetProgress}
+                onCreateCourse={handleCreateCourse}
+                onImportCourses={handleImportCourses}
+                onRemoveCourse={handleRemoveCourse}
+                onSelectPage={handleSelectPage}
+              />
+            )}
 
-          {activePage === 'profile' && (
-            <ProfilePage
-              profile={learnerProfile}
-              roleRequirements={roleRequirements}
-              careerMatch={careerMatch}
-              rankedCourses={rankedCourses}
-              adaptiveRoadmap={adaptiveRoadmap}
-              assessment={assessment}
-              agentInsights={agentInsights}
-              isAnalyzingAgents={isAnalyzingAgents}
-              agentAnalysisError={agentAnalysisError}
-              onRefreshAgents={() => void runLiveAgentAnalysis()}
-              coursesCount={courses.length}
-              completedLessonIds={completedLessonIds}
-              inProgressLessonIds={inProgressLessonIds}
-              onUpdateProfile={handleUpdateProfile}
-              onUpdateRoleRequirements={handleUpdateRoleRequirements}
-              onResetAllDemoData={handleResetAllDemoData}
-              onSelectPage={handleSelectPage}
-              onExitDemo={handleExitDemo}
-            />
-          )}
+            {activePage === 'profile' && (
+              <ProfilePage
+                profile={learnerProfile}
+                roleRequirements={roleRequirements}
+                careerMatch={careerMatch}
+                rankedCourses={rankedCourses}
+                adaptiveRoadmap={adaptiveRoadmap}
+                assessment={assessment}
+                agentInsights={agentInsights}
+                isAnalyzingAgents={isAnalyzingAgents}
+                agentAnalysisError={agentAnalysisError}
+                onRefreshAgents={() => void runLiveAgentAnalysis()}
+                coursesCount={courses.length}
+                completedLessonIds={completedLessonIds}
+                inProgressLessonIds={inProgressLessonIds}
+                onUpdateProfile={handleUpdateProfile}
+                onUpdateRoleRequirements={handleUpdateRoleRequirements}
+                onResetAllDemoData={handleResetAllDemoData}
+                onSelectPage={handleSelectPage}
+                onExitDemo={handleExitDemo}
+              />
+            )}
+          </Suspense>
 
           {!prefersReducedMotion && (
             <PageTransitionPanels phase={shutterPhase} targetPage={transitionTarget} />
