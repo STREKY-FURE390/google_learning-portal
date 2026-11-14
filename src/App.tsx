@@ -26,8 +26,10 @@ import {
   LearnerProfile,
   LessonItem,
   PortalPageId,
+  SimulatedAgentInsight,
 } from './data/portalData';
 import {
+  analyzeAgentTeamWithGemini,
   analyzeCareerMatch,
   buildAdaptiveRoadmap,
   rankRecommendedCourses,
@@ -256,7 +258,7 @@ export default function App() {
     [courses, careerMatch, assessment, completedLessonIds]
   );
 
-  const agentInsights = useMemo(
+  const baselineAgentInsights = useMemo(
     () =>
       simulateAgentTeam(
         learnerProfile,
@@ -277,6 +279,86 @@ export default function App() {
       inProgressLessonIds,
     ]
   );
+
+  const [liveAgentInsights, setLiveAgentInsights] = useState<SimulatedAgentInsight[] | null>(null);
+  const [isAnalyzingAgents, setIsAnalyzingAgents] = useState(false);
+  const [agentAnalysisError, setAgentAnalysisError] = useState<string | null>(null);
+  const agentAbortRef = useRef<AbortController | null>(null);
+
+  const runLiveAgentAnalysis = useCallback(async () => {
+    agentAbortRef.current?.abort();
+    const controller = new AbortController();
+    agentAbortRef.current = controller;
+
+    const topCourse = rankedCourses.find((r) => !completedLessonIds.includes(r.course.id))?.course;
+
+    setIsAnalyzingAgents(true);
+    setAgentAnalysisError(null);
+
+    try {
+      const agents = await analyzeAgentTeamWithGemini(
+        {
+          profile: learnerProfile,
+          match: careerMatch,
+          recommendedNext: adaptiveRoadmap.recommendedNext,
+          assessment,
+          completedCount: completedLessonIds.length,
+          inProgressCount: inProgressLessonIds.length,
+          totalModules: courses.length,
+          topCourseTitle: topCourse?.title,
+          topCourseSkill: topCourse?.skill,
+          topCourseExercise: topCourse?.exercise,
+          certificationsCount: learnerProfile.certifications.length,
+        },
+        controller.signal
+      );
+      if (!controller.signal.aborted) {
+        setLiveAgentInsights(agents);
+      }
+    } catch (err: unknown) {
+      if (err instanceof DOMException && err.name === 'AbortError') {
+        return;
+      }
+      const message =
+        err instanceof Error && err.message
+          ? err.message
+          : 'Unable to run live Gemini agent analysis right now.';
+      if (!controller.signal.aborted) {
+        setAgentAnalysisError(message);
+      }
+    } finally {
+      if (!controller.signal.aborted) {
+        setIsAnalyzingAgents(false);
+      }
+    }
+  }, [
+    learnerProfile,
+    careerMatch,
+    rankedCourses,
+    adaptiveRoadmap.recommendedNext,
+    assessment,
+    completedLessonIds,
+    inProgressLessonIds,
+    courses.length,
+  ]);
+
+  useEffect(() => {
+    if (!isDemoAuthenticated || (!hasEnteredHome && activePage === 'home')) {
+      return;
+    }
+
+    setLiveAgentInsights(null);
+    const timer = window.setTimeout(() => {
+      void runLiveAgentAnalysis();
+    }, 450);
+
+    return () => {
+      window.clearTimeout(timer);
+      agentAbortRef.current?.abort();
+    };
+  }, [isDemoAuthenticated, hasEnteredHome, activePage, runLiveAgentAnalysis]);
+
+  const agentInsights = liveAgentInsights ?? baselineAgentInsights;
 
   const clearTransitionTimers = useCallback(() => {
     transitionTimersRef.current.forEach((id) => window.clearTimeout(id));
@@ -575,6 +657,18 @@ export default function App() {
     window.requestAnimationFrame(() => scrollToTopImmediate());
   };
 
+  const handleAuthenticatedLogin = (authenticatedProfile: LearnerProfile) => {
+    setLearnerProfile(authenticatedProfile);
+    const initial = getPageFromLocation();
+    window.history.replaceState({ portalPage: initial }, '', `#${initial}`);
+    setActivePage(initial);
+    setShutterPhase('idle');
+    setStartOpenedToHero(false);
+    setHasEnteredHome(initial !== 'home');
+    setIsDemoAuthenticated(true);
+    window.requestAnimationFrame(() => scrollToTopImmediate());
+  };
+
   const handleExitDemo = () => {
     clearTransitionTimers();
     setShutterPhase('idle');
@@ -590,7 +684,10 @@ export default function App() {
   return (
     <AppErrorBoundary>
       {!isDemoAuthenticated ? (
-        <LoginPage onDemoLogin={handleDemoLogin} />
+        <LoginPage
+          onDemoLogin={handleDemoLogin}
+          onAuthenticatedLogin={handleAuthenticatedLogin}
+        />
       ) : !hasEnteredHome && activePage === 'home' ? (
         <>
           <HomeVideoGate onEnterHome={handleEnterHomeFromGate} />
@@ -614,6 +711,9 @@ export default function App() {
               adaptiveRoadmap={adaptiveRoadmap}
               assessment={assessment}
               agentInsights={agentInsights}
+              isAnalyzingAgents={isAnalyzingAgents}
+              agentAnalysisError={agentAnalysisError}
+              onRefreshAgents={() => void runLiveAgentAnalysis()}
               completedLessonIds={completedLessonIds}
               inProgressLessonIds={inProgressLessonIds}
               onStartLesson={handleStartLesson}
@@ -673,6 +773,9 @@ export default function App() {
               adaptiveRoadmap={adaptiveRoadmap}
               assessment={assessment}
               agentInsights={agentInsights}
+              isAnalyzingAgents={isAnalyzingAgents}
+              agentAnalysisError={agentAnalysisError}
+              onRefreshAgents={() => void runLiveAgentAnalysis()}
               coursesCount={courses.length}
               completedLessonIds={completedLessonIds}
               inProgressLessonIds={inProgressLessonIds}

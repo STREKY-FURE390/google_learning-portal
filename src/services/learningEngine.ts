@@ -424,6 +424,65 @@ export async function askGeminiMentor(
   return data.reply.trim();
 }
 
+export interface AgentAnalysisContext extends MentorChatContext {
+  topCourseTitle?: string;
+  topCourseSkill?: string;
+  topCourseExercise?: string;
+  certificationsCount?: number;
+}
+
+/**
+ * Calls server-side Express route POST /api/agents/analyze powered by @google/genai.
+ */
+export async function analyzeAgentTeamWithGemini(
+  context: AgentAnalysisContext,
+  signal?: AbortSignal
+): Promise<SimulatedAgentInsight[]> {
+  const response = await fetch('/api/agents/analyze', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    signal,
+    body: JSON.stringify({
+      learnerContext: {
+        name: context.profile.name,
+        careerGoal: context.profile.careerGoal,
+        matchPercent: context.match.matchPercent,
+        alreadyHaveSkills: context.match.alreadyHave.map((r) => r.requirement.skill),
+        developingSkills: context.match.developing.map((r) => r.requirement.skill),
+        missingSkills: context.match.missing.map((r) => r.requirement.skill),
+        assessmentStatus: context.assessment.status,
+        assessmentFocus: context.assessment.focusTopic,
+        recommendedNextTitle: context.recommendedNext?.title,
+        recommendedNextSkill: context.recommendedNext?.skill,
+        recommendedNextExercise: context.recommendedNext?.exercise,
+        topCourseTitle: context.topCourseTitle,
+        topCourseSkill: context.topCourseSkill,
+        topCourseExercise: context.topCourseExercise,
+        completedCount: context.completedCount,
+        inProgressCount: context.inProgressCount,
+        totalModules: context.totalModules,
+        certificationsCount: context.profile.certifications.length,
+        projects: context.profile.projects.map((p) => `${p.title} (${p.status})`),
+      },
+    }),
+  });
+
+  const data = (await response.json().catch(() => ({}))) as {
+    agents?: SimulatedAgentInsight[];
+    error?: string;
+  };
+
+  if (!response.ok) {
+    throw new Error(data.error || `Request failed with status ${response.status}`);
+  }
+
+  if (!Array.isArray(data.agents) || data.agents.length === 0) {
+    throw new Error('Gemini returned an empty agent analysis. Please try again.');
+  }
+
+  return data.agents;
+}
+
 /**
  * Deterministic local fallback helper (used only when no server response is requested).
  */

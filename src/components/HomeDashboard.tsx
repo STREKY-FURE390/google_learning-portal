@@ -53,6 +53,9 @@ interface HomeDashboardProps {
   };
   assessment: AssessmentState;
   agentInsights: SimulatedAgentInsight[];
+  isAnalyzingAgents?: boolean;
+  agentAnalysisError?: string | null;
+  onRefreshAgents?: () => void;
   completedLessonIds: string[];
   inProgressLessonIds: string[];
   onStartLesson: (lessonId: string) => void;
@@ -74,6 +77,9 @@ export function HomeDashboard({
   adaptiveRoadmap,
   assessment,
   agentInsights,
+  isAnalyzingAgents = false,
+  agentAnalysisError = null,
+  onRefreshAgents,
   completedLessonIds,
   inProgressLessonIds,
   onStartLesson,
@@ -955,19 +961,47 @@ export function HomeDashboard({
             <div>
               <div className="flex items-center gap-2 text-xs font-semibold text-[#9E7016]">
                 <MessageSquare className="w-4 h-4" aria-hidden="true" />
-                <span>5-Role Learning Team · Live Gemini AI Mentor</span>
+                <span>5-Role Learning Team · Live Gemini AI</span>
               </div>
               <h2
                 id="ai-team-heading"
                 className="mt-1 font-display text-xl sm:text-2xl font-extrabold tracking-tight text-[#1B1710]"
               >
-                How Your 5 Learning Roles Collaborate
+                How Your 5 AI Agents Collaborate
               </h2>
             </div>
-            <span className="text-xs font-medium text-[#6A5F4B]">
-              Local skill-gap tracking + Live Gemini AI chat
-            </span>
+
+            {onRefreshAgents && (
+              <button
+                type="button"
+                disabled={isAnalyzingAgents}
+                onClick={onRefreshAgents}
+                className="self-start sm:self-auto inline-flex items-center gap-2 min-h-[44px] px-4 py-2 rounded-full border border-[#DEC99A] bg-[#FAF6EC] hover:bg-[#F3EAD3] disabled:opacity-60 text-xs font-semibold text-[#1B1710] transition-colors cursor-pointer whitespace-nowrap focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#B68623]"
+              >
+                {isAnalyzingAgents ? (
+                  <>
+                    <Loader2 className="w-3.5 h-3.5 animate-spin text-[#9E7016]" aria-hidden="true" />
+                    <span>Analyzing with Gemini...</span>
+                  </>
+                ) : (
+                  <>
+                    <RotateCcw className="w-3.5 h-3.5 text-[#9E7016]" aria-hidden="true" />
+                    <span>Refresh 5 AI Agents</span>
+                  </>
+                )}
+              </button>
+            )}
           </div>
+
+          {agentAnalysisError && (
+            <div
+              role="alert"
+              className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-xs sm:text-[13px] text-rose-800 flex items-start gap-2"
+            >
+              <AlertCircle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" aria-hidden="true" />
+              <span>{agentAnalysisError}</span>
+            </div>
+          )}
 
           <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
             <div className="lg:col-span-7 grid grid-cols-1 sm:grid-cols-2 gap-4">

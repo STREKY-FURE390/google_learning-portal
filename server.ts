@@ -3,7 +3,7 @@ import express, { type Request, type Response } from 'express';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createServer as createViteServer } from 'vite';
-import { GoogleGenAI, ThinkingLevel } from '@google/genai';
+import { GoogleGenAI, ThinkingLevel, Type } from '@google/genai';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -27,9 +27,13 @@ interface LearnerContextPayload {
   recommendedNextTitle?: string;
   recommendedNextSkill?: string;
   recommendedNextExercise?: string;
+  topCourseTitle?: string;
+  topCourseSkill?: string;
+  topCourseExercise?: string;
   completedCount?: number;
   inProgressCount?: number;
   totalModules?: number;
+  certificationsCount?: number;
   projects?: string[];
 }
 
@@ -38,6 +42,25 @@ interface MentorChatRequestBody {
   history?: ChatHistoryEntry[];
   learnerContext?: LearnerContextPayload;
 }
+
+interface AgentsAnalyzeRequestBody {
+  learnerContext?: LearnerContextPayload;
+}
+
+type AgentRoleName =
+  | 'Skill Analyst'
+  | 'Career Matcher'
+  | 'Learning Guide'
+  | 'Progress Coach'
+  | 'AI Mentor';
+
+const EXPECTED_AGENT_ROLES: AgentRoleName[] = [
+  'Skill Analyst',
+  'Career Matcher',
+  'Learning Guide',
+  'Progress Coach',
+  'AI Mentor',
+];
 
 function createGeminiClient(): GoogleGenAI | null {
   const apiKey = process.env.GEMINI_API_KEY?.trim();
@@ -111,6 +134,35 @@ function formatConversationContents(
   return `Recent conversation:\n${transcript}\n\nLearner's new question: ${message}`;
 }
 
+function handleGeminiError(err: unknown, res: Response, fallbackMessage: string) {
+  const errorObj = err as { status?: number; message?: string };
+  const status = typeof errorObj?.status === 'number' ? errorObj.status : 500;
+  const rawMessage = errorObj?.message || fallbackMessage;
+
+  if (
+    status === 400 ||
+    status === 403 ||
+    rawMessage.includes('API_KEY_INVALID') ||
+    rawMessage.includes('PERMISSION_DENIED')
+  ) {
+    res.status(status).json({
+      error: 'Gemini AI agent service could not authorize this request right now.',
+    });
+    return;
+  }
+
+  if (status === 429 || rawMessage.includes('RESOURCE_EXHAUSTED')) {
+    res.status(429).json({
+      error: 'Gemini API rate limit reached. Please wait a moment and try again.',
+    });
+    return;
+  }
+
+  res.status(500).json({
+    error: fallbackMessage,
+  });
+}
+
 async function startServer() {
   const app = express();
   app.use(express.json({ limit: '1mb' }));
@@ -152,27 +204,118 @@ async function startServer() {
 
       res.json({ reply });
     } catch (err: unknown) {
-      const errorObj = err as { status?: number; message?: string };
-      const status = typeof errorObj?.status === 'number' ? errorObj.status : 500;
-      const rawMessage = errorObj?.message || 'Unexpected error calling Gemini API.';
+      handleGeminiError(
+        err,
+        res,
+        'Gemini mentor could not respond right now. Please try again in a moment.'
+      );
+    }
+  });
 
-      if (status === 400 || status === 403 || rawMessage.includes('API_KEY_INVALID') || rawMessage.includes('PERMISSION_DENIED')) {
-        res.status(status).json({
-          error: 'Gemini AI mentor service could not authorize this request right now.',
-        });
-        return;
-      }
+  app.post('/api/agents/analyze', async (req: Request, res: Response) => {
+    const body = (req.body ?? {}) as AgentsAnalyzeRequestBody;
+    const ctx = body.learnerContext;
 
-      if (status === 429 || rawMessage.includes('RESOURCE_EXHAUSTED')) {
-        res.status(429).json({
-          error: 'Gemini API rate limit reached. Please wait a moment and try again.',
-        });
-        return;
-      }
-
-      res.status(500).json({
-        error: 'Gemini mentor could not respond right now. Please try again in a moment.',
+    const ai = createGeminiClient();
+    if (!ai) {
+      res.status(503).json({
+        error: 'Gemini AI agent service is temporarily unavailable. Please try again shortly.',
       });
+      return;
+    }
+
+    const prompt = [
+      'Generate concise, tailored insights for all 5 DevPath Studio learning team roles:',
+      '1. Skill Analyst (Profile vs. Goal Audit)',
+      '2. Career Matcher (Target Role Match)',
+      '3. Learning Guide (Course & Exercise Ranker)',
+      '4. Progress Coach (Pacing & Assessment)',
+      '5. AI Mentor (Next-Step Guidance)',
+      '',
+      'Each contribution must be 1 to 2 clear plain-text sentences (no markdown ** or backticks) strictly grounded in the learner state below:',
+      buildSystemInstruction(ctx),
+      ctx?.topCourseTitle
+        ? `- Top Ranked Course: "${ctx.topCourseTitle}" (${ctx.topCourseSkill ?? ''}) — Exercise: ${ctx.topCourseExercise ?? ''}`
+        : '',
+      typeof ctx?.certificationsCount === 'number'
+        ? `- Certifications Count: ${ctx.certificationsCount}`
+        : '',
+    ]
+      .filter(Boolean)
+      .join('\n');
+
+    try {
+      const response = await ai.models.generateContent({
+        model: 'gemini-4-hydrogen',
+        contents: prompt,
+        config: {
+          systemInstruction:
+            'You are the DevPath Studio 5-Role AI Agent Coordinator. Return accurate, encouraging plain-text insights matching the JSON schema.',
+          thinkingConfig: { thinkingLevel: ThinkingLevel.LOW },
+          responseMimeType: 'application/json',
+          responseSchema: {
+            type: Type.OBJECT,
+            properties: {
+              agents: {
+                type: Type.ARRAY,
+                items: {
+                  type: Type.OBJECT,
+                  properties: {
+                    role: { type: Type.STRING },
+                    focus: { type: Type.STRING },
+                    contribution: { type: Type.STRING },
+                  },
+                  required: ['role', 'focus', 'contribution'],
+                },
+              },
+            },
+            required: ['agents'],
+          },
+        },
+      });
+
+      const rawText = (response.text ?? '').trim();
+      if (!rawText) {
+        res.status(502).json({
+          error: 'Gemini returned an empty agent analysis. Please try again.',
+        });
+        return;
+      }
+
+      const parsed = JSON.parse(rawText) as {
+        agents?: Array<{ role?: string; focus?: string; contribution?: string }>;
+      };
+      const items = Array.isArray(parsed?.agents) ? parsed.agents : [];
+
+      const byRole = new Map<string, { focus: string; contribution: string }>();
+      for (const item of items) {
+        if (item && typeof item.role === 'string' && typeof item.contribution === 'string') {
+          byRole.set(item.role.trim().toLowerCase(), {
+            focus: typeof item.focus === 'string' && item.focus.trim() ? item.focus.trim() : 'Live Analysis',
+            contribution: item.contribution.trim(),
+          });
+        }
+      }
+
+      const normalizedAgents = EXPECTED_AGENT_ROLES.map((role) => {
+        const match = byRole.get(role.toLowerCase());
+        return {
+          role,
+          focus: match?.focus ?? 'Live Analysis',
+          status: 'Live Gemini AI' as const,
+          contribution:
+            match?.contribution ??
+            `${role} reviewed ${ctx?.name || 'your'} ${ctx?.careerGoal || 'target'} profile (${ctx?.matchPercent ?? 0}% match).`,
+        };
+      });
+
+      res.json({ agents: normalizedAgents });
+    } catch (err: unknown) {
+      handleGeminiError(
+        err,
+        res,
+        'Gemini agent team analysis could not complete right now. Please try again.'
+      );
     }
   });
 

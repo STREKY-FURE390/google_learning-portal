@@ -615,7 +615,7 @@ export function LearningPathPage({
                 </p>
                 {progressCoachNote && (
                   <p className="text-[11px] font-medium text-[#8E6514]">
-                    Simulated Progress Coach: {progressCoachNote}
+                    Progress Coach: {progressCoachNote}
                   </p>
                 )}
               </div>
