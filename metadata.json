@@ -1,0 +1,6 @@
+{
+  "name": "Developer Learners",
+  "description": "Career-oriented skill-gap analysis and guided learning path platform for aspiring developers.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
